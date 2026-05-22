@@ -619,19 +619,19 @@ function App() {
 
   const saveNotes=(updated,changedId=null)=>{setNotes(updated);if(activeAccount&&changedId)sbSaveNote(activeAccount,changedId,updated[changedId]).catch(console.error);};
   const saveAiCache=(updated)=>{setAiCache(updated);if(activeAccount)window._localSet(storageKey("ai",activeAccount),JSON.stringify(updated));};
-  const saveLinks=(updated,changedId=null)=>{setLinks(updated);if(activeAccount&&changedId)sbSaveLinks(activeAccount,changedId,updated[changedId]||[]).catch(console.error);};
+  const saveLinks=(updated,changedIds=null)=>{setLinks(updated);if(!activeAccount||!changedIds)return;const ids=Array.isArray(changedIds)?changedIds:[changedIds];ids.forEach(id=>sbSaveLinks(activeAccount,id,updated[id]||[]).catch(console.error));};
 
   const handleAddLink=(targetId)=>{
     if(!selectedId||!targetId||!linkType||targetId===selectedId)return;
     const newLink={targetId,type:linkType,note:linkNote.trim(),createdAt:new Date().toISOString()};
     const updated={...links};updated[selectedId]=[...(updated[selectedId]||[]).filter(l=>l.targetId!==targetId),newLink];updated[targetId]=[...(updated[targetId]||[]).filter(l=>l.targetId!==selectedId),{...newLink,targetId:selectedId}];
-    saveLinks(updated);setShowLinkUI(false);setLinkStep("type");setLinkType(null);setLinkNote("");setLinkSearch("");
+    saveLinks(updated,[selectedId,targetId]);setShowLinkUI(false);setLinkStep("type");setLinkType(null);setLinkNote("");setLinkSearch("");
   };
 
   const handleRemoveLink=(targetId)=>{
     if(!selectedId)return;
     const updated={...links};updated[selectedId]=(updated[selectedId]||[]).filter(l=>l.targetId!==targetId);updated[targetId]=(updated[targetId]||[]).filter(l=>l.targetId!==selectedId);
-    if(!updated[selectedId]?.length)delete updated[selectedId];if(!updated[targetId]?.length)delete updated[targetId];saveLinks(updated);
+    if(!updated[selectedId]?.length)delete updated[selectedId];if(!updated[targetId]?.length)delete updated[targetId];saveLinks(updated,[selectedId,targetId]);
   };
 
   const syncFromSheet=async()=>{
