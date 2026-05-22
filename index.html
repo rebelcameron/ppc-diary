@@ -91,6 +91,15 @@ async function sbSaveWatchItem(accountId,eventId,data) {
   if (!data) { await sbFetch(`watchlist?event_id=eq.${eventId}&account_id=eq.${accountId}`,{method:"DELETE"}); }
   else { await sbFetch("watchlist",{method:"POST",headers:{"Prefer":"resolution=merge-duplicates"},body:JSON.stringify({event_id:eventId,account_id:accountId,data})}); }
 }
+async function sbLoadRules(accountId) {
+  try { const rows=await sbFetch(`rules?account_id=eq.${accountId}&order=created_at.asc`); return (rows||[]).map(r=>({id:r.id,...(r.data||{})})); } catch(e) { console.warn("rules table missing or unreadable",e); return []; }
+}
+async function sbSaveRule(accountId,rule) {
+  await sbFetch("rules",{method:"POST",headers:{"Prefer":"resolution=merge-duplicates"},body:JSON.stringify({id:rule.id,account_id:accountId,data:{name:rule.name,enabled:rule.enabled,preset_type:rule.preset_type,direction:rule.direction,min_pct_change:rule.min_pct_change,days_offset:rule.days_offset,hypothesis_template:rule.hypothesis_template}})});
+}
+async function sbDeleteRule(accountId,ruleId) {
+  await sbFetch(`rules?id=eq.${ruleId}&account_id=eq.${accountId}`,{method:"DELETE"});
+}
 
 const SHEETS_API_KEY = "AIzaSyBl0MMKu_qDXUiVR02tUhrVK2gY9HTJL74";
 function extractSheetId(input){if(!input)return"";const m=String(input).trim().match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);return m?m[1]:String(input).trim();}
@@ -292,6 +301,59 @@ async function fetchAIInsight(evt,apiKey){
   if(!res.ok)throw new Error("API error");
   const data=await res.json();
   return data.content?.find(b=>b.type==="text")?.text||"";
+}
+
+const RULE_PRESETS={
+  tcpa_changed:{label:"Target CPA changed",hint:"Fires when a campaign's Target CPA value is updated",direction:true,threshold:true,matches:e=>e.op==="UPDATE"&&(e.fields||[]).some(f=>f.includes("targetCpaMicros")),getValues:e=>{const o=Object.values(e.oldObj||{})[0]||{},n=Object.values(e.newObj||{})[0]||{};return{old:parseInt(o?.maximizeConversions?.targetCpaMicros||o?.targetCpa?.targetCpaMicros||0),new:parseInt(n?.maximizeConversions?.targetCpaMicros||n?.targetCpa?.targetCpaMicros||0)};}},
+  troas_changed:{label:"Target ROAS changed",hint:"Fires when a campaign's Target ROAS value is updated",direction:true,threshold:true,matches:e=>e.op==="UPDATE"&&(e.fields||[]).some(f=>f.includes("targetRoas")),getValues:e=>{const o=Object.values(e.oldObj||{})[0]||{},n=Object.values(e.newObj||{})[0]||{};return{old:parseFloat(o?.targetRoas?.targetRoas||0),new:parseFloat(n?.targetRoas?.targetRoas||0)};}},
+  budget_changed:{label:"Daily budget changed",hint:"Fires when a campaign's daily budget amount is updated",direction:true,threshold:true,matches:e=>e.op==="UPDATE"&&(e.fields||[]).includes("amountMicros"),getValues:e=>{const o=Object.values(e.oldObj||{})[0]||{},n=Object.values(e.newObj||{})[0]||{};return{old:parseInt(o?.amountMicros||0),new:parseInt(n?.amountMicros||0)};}},
+  bid_strategy_switched:{label:"Bidding strategy switched",hint:"Fires when bidding strategy type changes (Max Conv, tIS, tROAS, etc.)",direction:false,threshold:false,matches:e=>(e.fields||[]).some(f=>f.includes("biddingStrategy")||(f.includes("maximizeConversions")&&!f.includes("targetCpa"))||f.includes("targetImpressionShare")||f.includes("maximizeConversionValue"))},
+  campaign_paused:{label:"Campaign paused",hint:"Fires when a campaign's status changes to PAUSED",direction:false,threshold:false,matches:e=>e.resourceType==="CAMPAIGN"&&(e.fields||[]).includes("status")&&Object.values(e.newObj||{})[0]?.status==="PAUSED"},
+  campaign_enabled:{label:"Campaign enabled",hint:"Fires when a campaign's status changes to ENABLED",direction:false,threshold:false,matches:e=>e.resourceType==="CAMPAIGN"&&(e.fields||[]).includes("status")&&Object.values(e.newObj||{})[0]?.status==="ENABLED"},
+  campaign_created:{label:"Campaign created",hint:"Fires when a new campaign is created",direction:false,threshold:false,matches:e=>e.resourceType==="CAMPAIGN"&&e.op==="CREATE"},
+  keyword_added:{label:"Keyword added",hint:"Fires when a positive keyword is added to an ad group",direction:false,threshold:false,matches:e=>e.resourceType==="AD_GROUP_CRITERION"&&e.op==="CREATE"&&!!Object.values(e.newObj||{})[0]?.keyword&&!Object.values(e.newObj||{})[0]?.negative},
+  negative_added:{label:"Negative keyword added",hint:"Fires when a negative keyword is added",direction:false,threshold:false,matches:e=>e.resourceType==="AD_GROUP_CRITERION"&&e.op==="CREATE"&&!!Object.values(e.newObj||{})[0]?.keyword&&!!Object.values(e.newObj||{})[0]?.negative},
+};
+
+function ruleMatchesEvent(rule,evt){
+  const preset=RULE_PRESETS[rule.preset_type];
+  if(!preset||!preset.matches(evt))return false;
+  if(preset.direction&&rule.direction&&rule.direction!=="any"&&preset.getValues){
+    const v=preset.getValues(evt);
+    if(rule.direction==="up"&&!(v.new>v.old))return false;
+    if(rule.direction==="down"&&!(v.new<v.old))return false;
+  }
+  if(preset.threshold&&Number(rule.min_pct_change||0)>0&&preset.getValues){
+    const v=preset.getValues(evt);
+    if(!v.old)return false;
+    const pct=Math.abs((v.new-v.old)/v.old)*100;
+    if(pct<Number(rule.min_pct_change))return false;
+  }
+  return true;
+}
+
+function applyRulesToEvents(rules,events,existingExperiments){
+  const updates={};
+  if(!rules?.length||!events?.length)return updates;
+  for(const evt of events){
+    if(existingExperiments?.[evt.id])continue;
+    for(const rule of rules){
+      if(!rule.enabled)continue;
+      if(!ruleMatchesEvent(rule,evt))continue;
+      const eventDate=parseDate(evt.date)||new Date();
+      const checkDate=new Date(eventDate.getTime()+(Number(rule.days_offset)||14)*86400000);
+      const hypothesis=(rule.hypothesis_template||"Auto-watch: {summary}").replace(/\{summary\}/g,evt.summary||"");
+      updates[evt.id]={
+        hypothesis,
+        checkDate:checkDate.toISOString().slice(0,10),
+        eventId:evt.id,
+        createdAt:new Date().toISOString(),
+        source:{type:"rule",ruleId:rule.id,ruleName:rule.name}
+      };
+      break;
+    }
+  }
+  return updates;
 }
 
 const CSS=`
@@ -519,6 +581,9 @@ function App() {
   const [apiKey,setApiKey]=useState(()=>localStorage.getItem("ppc-anthropic-key")||"");
   const [sortDir,setSortDir]=useState("desc");
   const [experiments,setExperiments]=useState({});
+  const [rules,setRules]=useState([]);
+  const [showRulesModal,setShowRulesModal]=useState(false);
+  const [ruleForm,setRuleForm]=useState({id:null,name:"",preset_type:"tcpa_changed",direction:"any",min_pct_change:0,days_offset:14,hypothesis_template:"Auto-watch: {summary}",enabled:true,show:false});
   // ── NEW: expEditId tracks which watch list item is being edited (null = none)
   const [expEditId,setExpEditId]=useState(null);
   const [expForm,setExpForm]=useState({hypothesis:"",checkDate:"",show:false});
@@ -530,15 +595,18 @@ function App() {
   const dragRef=useRef(null);
 
   const loadAccountData=async(accountId)=>{
-    setActiveAccountState(accountId);setSelectedId(null);setEvents([]);setNotes({});setLinks({});setAiCache({});setExperiments({});
+    setActiveAccountState(accountId);setSelectedId(null);setEvents([]);setNotes({});setLinks({});setAiCache({});setExperiments({});setRules([]);
+    let loadedExperiments={},loadedRules=[],loadedEvents=[];
     try{
       setImportMsg({type:"success",text:"Loading from database…"});
       const{events,notes,links,experiments}=await sbLoadAccount(accountId);
+      loadedEvents=events;loadedExperiments=experiments;
       setEvents(events.length?events:[]);setNotes(notes);setLinks(links);setExperiments(experiments);
       setImportMsg({type:"success",text:`Loaded ${events.length} events from database`});
       setTimeout(()=>setImportMsg(null),3000);
     }catch(err){setImportMsg({type:"error",text:"Could not load from database: "+err.message});setTimeout(()=>setImportMsg(null),6000);}
     window._localGet(storageKey("ai",accountId)).then(r=>{if(r?.value)setAiCache(JSON.parse(r.value));}).catch(()=>{});
+    sbLoadRules(accountId).then(rs=>{loadedRules=rs;setRules(rs);}).catch(()=>setRules([]));
     // Auto-sync sheet on load if this account has one linked
     window._localGet(ACCOUNTS_KEY).then(r=>{
       const accs=r?.value?JSON.parse(r.value):{};
@@ -552,8 +620,10 @@ function App() {
           if(Object.keys(campaignNameMap).length>0){localStorage.setItem("ppc-camp-names",JSON.stringify(campaignNameMap));setSheetCampaignNames(campaignNameMap);}
           if(Object.keys(adGroupNameMap).length>0){localStorage.setItem("ppc-ag-names",JSON.stringify(adGroupNameMap));setSheetAdGroupNames(adGroupNameMap);}
           incoming.forEach(e=>{const campId=e.campaignKey?.replace("c/","");if(campId&&campaignNameMap[campId])e.campaignName=campaignNameMap[campId];if(e.adGroupId&&adGroupNameMap[e.adGroupId])e.adGroupName=adGroupNameMap[e.adGroupId];});
-          setEvents(prev=>{const existingMap=Object.fromEntries(prev.map(e=>[e.id,e]));const incomingMap=Object.fromEntries(incoming.map(e=>[e.id,e]));const merged=[...incoming.map(e=>({...existingMap[e.id],...e})),...prev.filter(e=>!incomingMap[e.id])];merged.sort((a,b)=>new Date(b.date)-new Date(a.date));return merged;});
+          let mergedEvents=[];
+          setEvents(prev=>{const existingMap=Object.fromEntries(prev.map(e=>[e.id,e]));const incomingMap=Object.fromEntries(incoming.map(e=>[e.id,e]));const merged=[...incoming.map(e=>({...existingMap[e.id],...e})),...prev.filter(e=>!incomingMap[e.id])];merged.sort((a,b)=>new Date(b.date)-new Date(a.date));mergedEvents=merged;return merged;});
           sbSaveEvents(accountId,incoming).catch(console.error);
+          applyRulesAndPersist(loadedRules,mergedEvents,loadedExperiments,accountId);
           setImportMsg({type:"success",text:`Sheet synced — ${incoming.length} events`});
           setTimeout(()=>setImportMsg(null),3000);
         }).catch(err=>{
@@ -562,6 +632,16 @@ function App() {
         }).finally(()=>setSheetSyncing(false));
       }
     }).catch(()=>{});
+  };
+
+  const applyRulesAndPersist=async(rulesArr,eventsArr,currentExperiments,accountId)=>{
+    if(!rulesArr?.length||!eventsArr?.length||!accountId)return{};
+    const newItems=applyRulesToEvents(rulesArr,eventsArr,currentExperiments);
+    const ids=Object.keys(newItems);
+    if(!ids.length)return{};
+    setExperiments(prev=>({...prev,...newItems}));
+    await Promise.all(ids.map(eid=>sbSaveWatchItem(accountId,eid,newItems[eid]).catch(console.error)));
+    return newItems;
   };
 
   const switchAccount=(accountId)=>{loadAccountData(accountId);};
@@ -584,6 +664,35 @@ function App() {
   const deleteAccount=(id)=>{
     const updated={...accounts};delete updated[id];setAccounts(updated);window._localSet(ACCOUNTS_KEY,JSON.stringify(updated)).catch(()=>{});
     const remaining=Object.keys(updated);if(remaining.length>0)switchAccount(remaining[0]);else{setActiveAccountState(null);setEvents([]);setNotes({});setLinks({});}
+  };
+
+  const handleSaveRule=async()=>{
+    if(!activeAccount||!ruleForm.preset_type)return;
+    const id=ruleForm.id||("rule_"+Date.now());
+    const name=ruleForm.name.trim()||RULE_PRESETS[ruleForm.preset_type]?.label||"Rule";
+    const rule={id,name,enabled:ruleForm.enabled,preset_type:ruleForm.preset_type,direction:ruleForm.direction,min_pct_change:Number(ruleForm.min_pct_change)||0,days_offset:Number(ruleForm.days_offset)||14,hypothesis_template:ruleForm.hypothesis_template||"Auto-watch: {summary}"};
+    try{await sbSaveRule(activeAccount,rule);}catch(err){setImportMsg({type:"error",text:"Could not save rule: "+err.message+" (did you run the SQL?)"});setTimeout(()=>setImportMsg(null),8000);return;}
+    const nextRules=ruleForm.id?rules.map(r=>r.id===id?rule:r):[...rules,rule];
+    setRules(nextRules);
+    const created=await applyRulesAndPersist([rule],events,experiments,activeAccount);
+    const count=Object.keys(created).length;
+    setImportMsg({type:"success",text:ruleForm.id?`Rule updated · ${count} new watch item${count===1?"":"s"} from backfill`:`Rule saved · ${count} watch item${count===1?"":"s"} created from history`});
+    setTimeout(()=>setImportMsg(null),5000);
+    setRuleForm({id:null,name:"",preset_type:"tcpa_changed",direction:"any",min_pct_change:0,days_offset:14,hypothesis_template:"Auto-watch: {summary}",enabled:true,show:false});
+  };
+  const handleEditRule=(rule)=>{
+    setRuleForm({id:rule.id,name:rule.name||"",preset_type:rule.preset_type,direction:rule.direction||"any",min_pct_change:rule.min_pct_change||0,days_offset:rule.days_offset||14,hypothesis_template:rule.hypothesis_template||"Auto-watch: {summary}",enabled:rule.enabled!==false,show:true});
+  };
+  const handleDeleteRule=async(ruleId)=>{
+    if(!activeAccount)return;
+    try{await sbDeleteRule(activeAccount,ruleId);}catch(e){console.error(e);}
+    setRules(rs=>rs.filter(r=>r.id!==ruleId));
+  };
+  const handleToggleRule=async(rule)=>{
+    if(!activeAccount)return;
+    const updated={...rule,enabled:!rule.enabled};
+    try{await sbSaveRule(activeAccount,updated);}catch(e){console.error(e);return;}
+    setRules(rs=>rs.map(r=>r.id===rule.id?updated:r));
   };
 
   const saveExperiments=(updated,changedId=null)=>{
@@ -645,8 +754,10 @@ function App() {
       if(Object.keys(campaignNameMap).length>0){localStorage.setItem("ppc-camp-names",JSON.stringify(campaignNameMap));setSheetCampaignNames(campaignNameMap);}
       if(Object.keys(adGroupNameMap).length>0){localStorage.setItem("ppc-ag-names",JSON.stringify(adGroupNameMap));setSheetAdGroupNames(adGroupNameMap);}
       incoming.forEach(e=>{const campId=e.campaignKey?.replace("c/","");if(campId&&campaignNameMap[campId])e.campaignName=campaignNameMap[campId];if(e.adGroupId&&adGroupNameMap[e.adGroupId])e.adGroupName=adGroupNameMap[e.adGroupId];});
-      setEvents(prev=>{const existingMap=Object.fromEntries(prev.map(e=>[e.id,e]));const incomingMap=Object.fromEntries(incoming.map(e=>[e.id,e]));const merged=[...incoming.map(e=>({...existingMap[e.id],...e})),...prev.filter(e=>!incomingMap[e.id])];merged.sort((a,b)=>new Date(b.date)-new Date(a.date));return merged;});
+      let mergedEvents=[];
+      setEvents(prev=>{const existingMap=Object.fromEntries(prev.map(e=>[e.id,e]));const incomingMap=Object.fromEntries(incoming.map(e=>[e.id,e]));const merged=[...incoming.map(e=>({...existingMap[e.id],...e})),...prev.filter(e=>!incomingMap[e.id])];merged.sort((a,b)=>new Date(b.date)-new Date(a.date));mergedEvents=merged;return merged;});
       if(activeAccount)await sbSaveEvents(activeAccount,incoming);
+      await applyRulesAndPersist(rules,mergedEvents,experiments,activeAccount);
       setImportMsg({type:"success",text:`${incoming.length} events synced from Google Sheet`});setTimeout(()=>setImportMsg(null),5000);
     }catch(err){setImportMsg({type:"error",text:"Sheet sync failed: "+err.message});setTimeout(()=>setImportMsg(null),6000);}
     setSheetSyncing(false);
@@ -797,6 +908,7 @@ function App() {
               Watch List ({Object.keys(experiments).length})
               {Object.values(experiments).filter(e=>!e.verdict&&e.checkDate&&daysUntil(e.checkDate)<=0).length>0&&<span style={{position:"absolute",top:2,right:2,width:6,height:6,borderRadius:"50%",background:"var(--red)",display:"inline-block"}}/>}
             </button>
+            <button className="pill" onClick={()=>setShowRulesModal(true)} title="Auto-create watch items from event triggers">⚙ Rules ({rules.length})</button>
             <button className={`pill ${groupingOn?"on-green":""}`} onClick={()=>setGroupingOn(v=>!v)}>{groupingOn?"⬡ Grouped":"⬡ Group"}</button>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <input type="password" placeholder="Anthropic API key for AI…" value={apiKey} onChange={e=>{setApiKey(e.target.value);localStorage.setItem("ppc-anthropic-key",e.target.value);}} style={{fontSize:11,padding:"4px 10px",borderRadius:6,border:"1px solid var(--border)",background:"var(--bg3)",color:"var(--text)",outline:"none",width:200,fontFamily:"var(--mono)"}}/>
@@ -911,6 +1023,7 @@ function App() {
                             <div key={exp.eventId} className={`exp-card ${isOverdue?"overdue":""} ${isDueSoon?"due-soon":""} ${exp.verdict?"concluded":""}`} onClick={()=>{handleSelectEvent(exp.eventId);setView("events");}} style={{cursor:"pointer"}}>
                               <div style={{display:"flex",alignItems:"flex-start",gap:6,marginBottom:4}}>
                                 <div style={{flex:1}}><div style={{fontSize:11,fontWeight:700,color:"var(--text)",marginBottom:2,lineHeight:1.35}}>{evt.summary}</div><div style={{fontSize:10,color:"var(--muted)",fontFamily:"var(--mono)"}}>{evt.campaignName?.split("|").pop()?.trim()}</div></div>
+                                {exp.source?.type==="rule"&&<span title={`Auto-created by rule: ${exp.source.ruleName}`} style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"var(--purple-bg)",color:"var(--purple)",border:"1px solid var(--purple-border)",fontWeight:600,flexShrink:0}}>⚙ {exp.source.ruleName}</span>}
                                 {verdict&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:4,background:verdict.color+"22",color:verdict.color,border:`1px solid ${verdict.color}44`,fontWeight:700,flexShrink:0}}>{verdict.label}</span>}
                               </div>
                               <div className="exp-hypothesis">{exp.hypothesis}</div>
@@ -1142,6 +1255,89 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* Rules modal */}
+        {showRulesModal&&(()=>{const preset=RULE_PRESETS[ruleForm.preset_type]||{};return(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setShowRulesModal(false)}>
+            <div style={{background:"var(--bg2)",border:"1px solid var(--border2)",borderRadius:12,padding:24,width:540,maxWidth:"92vw",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,.5)"}} onClick={e=>e.stopPropagation()}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                <div style={{fontSize:18,fontWeight:600}}>Watch List Rules</div>
+                <button className="nc-btn" onClick={()=>setShowRulesModal(false)}>Close</button>
+              </div>
+              <div style={{fontSize:11,color:"var(--muted)",marginBottom:16,lineHeight:1.5}}>Auto-create a Watch List item whenever a matching change happens. Rules run on every sheet sync and backfill against existing events when created.</div>
+
+              {rules.length>0&&(<div style={{marginBottom:18}}>
+                {rules.map(r=>{const p=RULE_PRESETS[r.preset_type];return(
+                  <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",border:"1px solid var(--border)",borderRadius:8,marginBottom:6,background:r.enabled?"var(--bg)":"var(--bg3)",opacity:r.enabled?1:.6}}>
+                    <button onClick={()=>handleToggleRule(r)} title={r.enabled?"Disable":"Enable"} style={{width:32,height:18,borderRadius:10,border:"none",background:r.enabled?"var(--green)":"var(--border2)",position:"relative",cursor:"pointer",flexShrink:0,padding:0}}>
+                      <span style={{position:"absolute",top:2,left:r.enabled?16:2,width:14,height:14,borderRadius:"50%",background:"#fff",transition:"left .15s"}}/>
+                    </button>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:600,color:"var(--text)"}}>{r.name||p?.label||"Rule"}</div>
+                      <div style={{fontSize:10,color:"var(--muted)",fontFamily:"var(--mono)",marginTop:2}}>
+                        {p?.label||r.preset_type}
+                        {p?.direction&&r.direction&&r.direction!=="any"&&` · ${r.direction==="up"?"↑ increased":"↓ decreased"}`}
+                        {p?.threshold&&Number(r.min_pct_change)>0&&` · ≥${r.min_pct_change}%`}
+                        {` · watch ${r.days_offset||14}d`}
+                      </div>
+                    </div>
+                    <button className="nc-btn nc-btn-edit" style={{fontSize:10,padding:"3px 8px"}} onClick={()=>handleEditRule(r)}>Edit</button>
+                    <button className="nc-btn nc-btn-del" style={{fontSize:10,padding:"3px 8px"}} onClick={()=>handleDeleteRule(r.id)}>Delete</button>
+                  </div>
+                );})}
+              </div>)}
+
+              {!ruleForm.show&&(<button className="btn-save" onClick={()=>setRuleForm(f=>({...f,show:true}))} style={{width:"100%"}}>+ Add Rule</button>)}
+
+              {ruleForm.show&&(<div style={{border:"1px solid var(--border)",borderRadius:10,padding:14,background:"var(--bg)"}}>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:10}}>{ruleForm.id?"Edit rule":"New rule"}</div>
+
+                <div style={{marginBottom:10}}>
+                  <div className="meta-label" style={{marginBottom:5}}>Trigger</div>
+                  <select value={ruleForm.preset_type} onChange={e=>setRuleForm(f=>({...f,preset_type:e.target.value,direction:"any",min_pct_change:0}))} className="search-input" style={{width:"100%",fontFamily:"var(--sans)",fontSize:12}}>
+                    {Object.entries(RULE_PRESETS).map(([k,v])=>(<option key={k} value={k}>{v.label}</option>))}
+                  </select>
+                  <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>{preset.hint}</div>
+                </div>
+
+                {preset.direction&&(<div style={{marginBottom:10}}>
+                  <div className="meta-label" style={{marginBottom:5}}>Direction</div>
+                  <div style={{display:"flex",gap:5}}>
+                    {[["any","Any change"],["up","↑ Increased only"],["down","↓ Decreased only"]].map(([v,label])=>(<button key={v} onClick={()=>setRuleForm(f=>({...f,direction:v}))} className="pill" style={ruleForm.direction===v?{background:"var(--blue-bg)",borderColor:"var(--blue-border)",color:"var(--blue)",fontWeight:600}:{}}>{label}</button>))}
+                  </div>
+                </div>)}
+
+                {preset.threshold&&(<div style={{marginBottom:10}}>
+                  <div className="meta-label" style={{marginBottom:5}}>Minimum % change <span style={{color:"var(--muted)",fontWeight:400}}>(0 = any)</span></div>
+                  <input type="number" min="0" step="1" value={ruleForm.min_pct_change} onChange={e=>setRuleForm(f=>({...f,min_pct_change:e.target.value}))} className="search-input" style={{fontFamily:"var(--mono)",width:120}}/>
+                </div>)}
+
+                <div style={{marginBottom:10}}>
+                  <div className="meta-label" style={{marginBottom:5}}>Watch for (days from event date)</div>
+                  <input type="number" min="1" step="1" value={ruleForm.days_offset} onChange={e=>setRuleForm(f=>({...f,days_offset:e.target.value}))} className="search-input" style={{fontFamily:"var(--mono)",width:120}}/>
+                </div>
+
+                <div style={{marginBottom:10}}>
+                  <div className="meta-label" style={{marginBottom:5}}>Rule name <span style={{color:"var(--muted)",fontWeight:400}}>(optional)</span></div>
+                  <input className="search-input" placeholder={preset.label||"My rule"} value={ruleForm.name} onChange={e=>setRuleForm(f=>({...f,name:e.target.value}))}/>
+                </div>
+
+                <div style={{marginBottom:14}}>
+                  <div className="meta-label" style={{marginBottom:5}}>Hypothesis template</div>
+                  <input className="search-input" value={ruleForm.hypothesis_template} onChange={e=>setRuleForm(f=>({...f,hypothesis_template:e.target.value}))} style={{fontSize:12}}/>
+                  <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>Use <code style={{fontFamily:"var(--mono)"}}>{"{summary}"}</code> to insert the change summary</div>
+                </div>
+
+                <div style={{display:"flex",gap:8}}>
+                  <button className="btn-save" onClick={handleSaveRule} style={{flex:1}}>{ruleForm.id?"Save Changes":"Create Rule"}</button>
+                  <button className="nc-btn" onClick={()=>setRuleForm({id:null,name:"",preset_type:"tcpa_changed",direction:"any",min_pct_change:0,days_offset:14,hypothesis_template:"Auto-watch: {summary}",enabled:true,show:false})}>Cancel</button>
+                </div>
+              </div>)}
+
+              {rules.length===0&&!ruleForm.show&&(<div style={{marginTop:14,fontSize:11,color:"var(--muted)",fontStyle:"italic"}}>No rules yet. Add one to auto-create watch items for matching changes.</div>)}
+            </div>
+          </div>
+        );})()}
       </div>
     </>
   );
