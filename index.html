@@ -93,8 +93,10 @@ async function sbSaveWatchItem(accountId,eventId,data) {
 }
 
 const SHEETS_API_KEY = "AIzaSyBl0MMKu_qDXUiVR02tUhrVK2gY9HTJL74";
+function extractSheetId(input){if(!input)return"";const m=String(input).trim().match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);return m?m[1]:String(input).trim();}
 async function fetchSheetData(sheetId) {
-  const base=`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`;
+  const id=extractSheetId(sheetId);
+  const base=`https://sheets.googleapis.com/v4/spreadsheets/${id}`;
   const key=`?key=${SHEETS_API_KEY}`;
   const [eventsRes,campaignsRes,adGroupsRes]=await Promise.all([
     fetch(`${base}/values/change_history!A:L${key}`).then(r=>r.json()),
