@@ -359,8 +359,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .ctx-sitelink{background:var(--purple-bg);color:var(--purple);border:1px solid var(--purple-border)}
 .ctx-group{background:var(--bg3);color:var(--muted2);border:1px solid var(--border)}
 .note-dot{width:5px;height:5px;border-radius:50%;background:var(--purple);flex-shrink:0;margin-left:auto}
-.group-expand{font-size:10px;color:var(--muted2);cursor:pointer;padding:4px 8px;border-radius:5px;border:1px solid var(--border);background:var(--bg);margin-top:5px;transition:all .12s;font-family:var(--sans);font-weight:500}
-.group-expand:hover{color:var(--text);border-color:var(--border2);background:var(--bg3)}
+.group-expand{display:flex;align-items:center;gap:5px;width:calc(100% + 32px);margin:12px -16px -14px;padding:9px 16px;font-size:10px;color:var(--muted2);cursor:pointer;border:none;border-top:1px solid var(--border);background:transparent;transition:all .12s;font-family:var(--sans);font-weight:600;text-align:left;border-radius:0 0 9px 9px;letter-spacing:.2px}
+.group-expand:hover{color:var(--text);background:var(--bg3)}
 .group-children{margin-top:4px;margin-left:10px;border-left:2px solid var(--border);padding-left:8px}
 .resizer{width:5px;background:transparent;cursor:col-resize;position:absolute;top:0;bottom:0;z-index:50;transition:background .15s;user-select:none;touch-action:none}
 .resizer:hover,.resizer.active{background:rgba(37,99,235,.2)}
@@ -748,8 +748,9 @@ function App() {
             </div>
           )}
           {e.isGroup&&(<div className="evt-ctx-row"><span className="ctx-chip ctx-campaign" title={e.campaignName}>📣 {((n)=>n.length>28?n.slice(0,26)+"…":n)(mergedCampaignNames[e.campaignKey]||e.campaignName)}</span><span className="ctx-chip ctx-group">{e.groupCount} changes · {fmtDate(e.date)}</span></div>)}
+          {e.isGroup&&(<button className="group-expand" onClick={ev=>{ev.stopPropagation();setExpandedGroups(s=>{const n=new Set(s);n.has(e.id)?n.delete(e.id):n.add(e.id);return n;})}}>{expandedGroups.has(e.id)?"▲ Collapse":`▼ Show all ${e.groupCount} changes`}</button>)}
         </div>
-        {e.isGroup&&(<><button className="group-expand" onClick={ev=>{ev.stopPropagation();setExpandedGroups(s=>{const n=new Set(s);n.has(e.id)?n.delete(e.id):n.add(e.id);return n;})}}>{expandedGroups.has(e.id)?"▲ Collapse":`▼ Show all ${e.groupCount} changes`}</button>{expandedGroups.has(e.id)&&(<div className="group-children">{e.groupEvents.map(child=>renderEventCard(child,true))}</div>)}</>)}
+        {e.isGroup&&expandedGroups.has(e.id)&&(<div className="group-children">{e.groupEvents.map(child=>renderEventCard(child,true))}</div>)}
       </div>
     );
   };
