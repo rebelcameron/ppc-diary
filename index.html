@@ -331,6 +331,20 @@ const OP_COLORS={CREATE:"#4ade80",UPDATE:"#60a5fa",REMOVE:"#f87171"};
 const SIG_CONFIG={high:{color:"#f59e0b",bg:"rgba(245,158,11,.1)",border:"rgba(245,158,11,.25)",label:"High impact",dot:""},medium:{color:"#60a5fa",bg:"rgba(96,165,250,.08)",border:"rgba(96,165,250,.18)",label:"Medium impact",dot:"●"},low:{color:"#3d4a66",bg:"transparent",border:"transparent",label:"Low impact",dot:""}};
 const TYPE_ICONS={CAMPAIGN:"📣",CAMPAIGN_BUDGET:"💰",AD_GROUP:"📦",AD_GROUP_CRITERION:"🎯",AD:"📝",ASSET:"🖼️",CAMPAIGN_ASSET:"📎",AD_GROUP_ASSET:"📎",CAMPAIGN_CRITERION:"🌍",AD_GROUP_AD:"📢",CUSTOMER_ASSET:"🏢"};
 const TYPE_GROUPS={"Ad":["AD","AD_GROUP_AD"],"Campaign":["CAMPAIGN"],"Budget":["CAMPAIGN_BUDGET"],"Ad Group":["AD_GROUP"],"Keyword / Target":["AD_GROUP_CRITERION"],"Campaign Target":["CAMPAIGN_CRITERION"],"Asset":["ASSET","CAMPAIGN_ASSET","AD_GROUP_ASSET","CUSTOMER_ASSET","ASSET_SET","ASSET_SET_ASSET","CUSTOMER_ASSET_SET","CAMPAIGN_ASSET_SET","AD_GROUP_ASSET_SET"]};
+
+const BID_PATTERNS={
+  campaign:{resourceTypes:["CAMPAIGN"],fieldMatch:f=>/biddingStrategy|maximizeConversions|maximizeConversionValue|targetRoas|targetCpa|targetImpressionShare|targetSpend|manualCpc|manualCpm|manualCpv|percentCpc/i.test(f)},
+  adgroup:{resourceTypes:["AD_GROUP"],fieldMatch:f=>/cpcBidMicros|cpmBidMicros|cpvBidMicros|targetCpaMicros|targetRoas|effectiveCpcBid|effectiveTargetCpa|percentCpcBid/i.test(f)},
+  keyword:{resourceTypes:["AD_GROUP_CRITERION"],fieldMatch:f=>/cpcBidMicros|cpmBidMicros|cpvBidMicros|percentCpcBidMicros|effectiveCpcBid/i.test(f)},
+  portfolio:{resourceTypes:["BIDDING_STRATEGY","ACCESSIBLE_BIDDING_STRATEGY"],fieldMatch:()=>true},
+};
+function matchesBidFilter(evt, key){
+  if(key==="all")return true;
+  if(key==="any"){return Object.values(BID_PATTERNS).some(p=>p.resourceTypes.includes(evt.resourceType)&&(evt.fields||[]).some(f=>p.fieldMatch(f)));}
+  const p=BID_PATTERNS[key];if(!p)return true;
+  if(!p.resourceTypes.includes(evt.resourceType))return false;
+  return(evt.fields||[]).some(f=>p.fieldMatch(f));
+}
 const TYPE_TO_GROUP=Object.fromEntries(Object.entries(TYPE_GROUPS).flatMap(([label,types])=>types.map(t=>[t,label])));
 const TYPE_LABELS={CAMPAIGN:"Campaign",CAMPAIGN_BUDGET:"Budget",AD_GROUP:"Ad Group",AD_GROUP_CRITERION:"Keyword / Target",AD:"Ad",AD_GROUP_AD:"Ad",ASSET:"Asset",CAMPAIGN_ASSET:"Campaign Asset",AD_GROUP_ASSET:"Ad Group Asset",CAMPAIGN_CRITERION:"Campaign Target",CUSTOMER_ASSET:"Account Asset"};
 const NOTE_TAGS=["Strategy","Bug Fix","Test","Budget","Bidding","Targeting","Creative","Structural"];
@@ -638,6 +652,7 @@ function App() {
   const [view,setView]=useState("events");
   const [search,setSearch]=useState("");
   const [filterType,setFilterType]=useState("all");
+  const [filterBid,setFilterBid]=useState("all");
   const [filterOp,setFilterOp]=useState("all");
   const [filterSigs,setFilterSigs]=useState(new Set());
   const [dateFrom,setDateFrom]=useState("");
@@ -879,6 +894,7 @@ function App() {
   const filtered=useMemo(()=>{
     let list=events;
     if(filterType!=="all"){const group=TYPE_GROUPS[filterType];list=list.filter(e=>group?group.includes(e.resourceType):e.resourceType===filterType);}
+    if(filterBid!=="all")list=list.filter(e=>matchesBidFilter(e,filterBid));
     if(filterOp!=="all")list=list.filter(e=>(e.op||e.operation)===filterOp);
     if(filterSigs.size>0)list=list.filter(e=>filterSigs.has(e.significance));
     if(filterUser!=="all")list=list.filter(e=>e.user===filterUser);
@@ -890,7 +906,7 @@ function App() {
     else if(search.trim()){const q=search.toLowerCase();list=list.filter(e=>e.summary.toLowerCase().includes(q)||e.campaignName.toLowerCase().includes(q)||e.userName.toLowerCase().includes(q)||e.fields?.some(f=>f.toLowerCase().includes(q)));}
     const grouped=groupEvents(list,groupingOn);
     return sortDir==="asc"?[...grouped].reverse():grouped;
-  },[events,filterType,filterOp,filterSigs,filterUser,filterClient,dateFrom,dateTo,search,groupingOn,sortDir]);
+  },[events,filterType,filterBid,filterOp,filterSigs,filterUser,filterClient,dateFrom,dateTo,search,groupingOn,sortDir]);
 
   const mergedCampaignNames=useMemo(()=>({...campaignNames,...sheetCampaignNames}),[campaignNames,sheetCampaignNames]);
   const mergedAdGroupNames=useMemo(()=>({...adGroupNames,...sheetAdGroupNames}),[adGroupNames,sheetAdGroupNames]);
@@ -1059,6 +1075,10 @@ function App() {
                 <span className="fstrip-label">Type</span>
                 <span className={`ftag ${filterType==="all"?"on":""}`} onClick={()=>setFilterType("all")}>All</span>
                 {types.map(t=>(<span key={t} className={`ftag ${filterType===t?"on":""}`} onClick={()=>setFilterType(filterType===t?"all":t)}>{t}</span>))}
+              </div>
+              <div className="filter-strip">
+                <span className="fstrip-label">Bids</span>
+                {[{k:"all",label:"All"},{k:"any",label:"Any bid"},{k:"campaign",label:"Campaign"},{k:"adgroup",label:"Ad group"},{k:"keyword",label:"Keyword"},{k:"portfolio",label:"Portfolio"}].map(o=>(<span key={o.k} className={`ftag ${filterBid===o.k?"on":""}`} onClick={()=>setFilterBid(o.k)}>{o.label}</span>))}
               </div>
               <div className="filter-strip">
                 <span className="fstrip-label">By</span>
