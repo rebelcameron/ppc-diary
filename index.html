@@ -52,12 +52,54 @@ const ACCOUNTS_KEY = "ppc-diary-accounts-v1";
 const storageKey = (type, accountId) => `ppc-diary-${type}-${accountId}`;
 const SUPABASE_URL = "https://rckoguqdqpdbybpsjujq.supabase.co";
 const SUPABASE_KEY = "sb_publishable_Xm_GA56MC5NTPg7ZDLeMVQ_-k7idSX9";
+const SESSION_KEY = "ppc-supabase-session";
+
+let CURRENT_SESSION = null;
+try { const s = localStorage.getItem(SESSION_KEY); if (s) CURRENT_SESSION = JSON.parse(s); } catch(e) {}
+
+function sbAuthHeaders() {
+  const token = CURRENT_SESSION?.access_token || SUPABASE_KEY;
+  return {"apikey":SUPABASE_KEY,"Authorization":"Bearer "+token};
+}
+async function sbAuthPost(action, body) {
+  const res = await fetch(SUPABASE_URL + "/auth/v1/" + action, {
+    method:"POST",
+    headers:{"apikey":SUPABASE_KEY,"Content-Type":"application/json"},
+    body:JSON.stringify(body),
+  });
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) throw new Error(data.msg || data.error_description || data.message || `Auth failed (${res.status})`);
+  return data;
+}
+async function sbLogin(email, password) {
+  const data = await sbAuthPost("token?grant_type=password", {email, password});
+  CURRENT_SESSION = data; localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+  return data;
+}
+async function sbRefresh() {
+  if (!CURRENT_SESSION?.refresh_token) return null;
+  try {
+    const data = await sbAuthPost("token?grant_type=refresh_token", {refresh_token: CURRENT_SESSION.refresh_token});
+    CURRENT_SESSION = data; localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+    return data;
+  } catch(e) { return null; }
+}
+function sbLogout() {
+  CURRENT_SESSION = null;
+  localStorage.removeItem(SESSION_KEY);
+}
 
 async function sbFetch(path, options = {}) {
-  const res = await fetch(SUPABASE_URL + "/rest/v1/" + path, {
+  const doFetch = () => fetch(SUPABASE_URL + "/rest/v1/" + path, {
     ...options,
-    headers: {"apikey":SUPABASE_KEY,"Authorization":"Bearer "+SUPABASE_KEY,"Content-Type":"application/json","Prefer":options.prefer||"",...(options.headers||{})},
+    headers: {...sbAuthHeaders(),"Content-Type":"application/json","Prefer":options.prefer||"",...(options.headers||{})},
   });
+  let res = await doFetch();
+  if (res.status === 401 && CURRENT_SESSION) {
+    const refreshed = await sbRefresh();
+    if (refreshed) res = await doFetch();
+    else { sbLogout(); window.location.reload(); return null; }
+  }
   if (!res.ok) { const err = await res.text(); throw new Error("Supabase error: " + err); }
   const text = await res.text();
   return text ? JSON.parse(text) : null;
@@ -550,7 +592,39 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 `;
 
 
+function LoginScreen({onLogin}) {
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [error,setError]=useState("");
+  const [loading,setLoading]=useState(false);
+  const submit=async(e)=>{
+    e.preventDefault();
+    setError("");setLoading(true);
+    try { const s=await sbLogin(email.trim(),password); onLogin(s); }
+    catch(err){ setError(err.message); }
+    finally{ setLoading(false); }
+  };
+  return (
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#fafafa",fontFamily:"'Inter',sans-serif"}}>
+      <form onSubmit={submit} style={{background:"#fff",border:"1px solid #e8eaed",borderRadius:12,padding:32,width:380,maxWidth:"92vw",boxShadow:"0 8px 30px rgba(0,0,0,.06)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
+          <div style={{width:32,height:32,borderRadius:8,background:"#2563eb",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700}}>P</div>
+          <div style={{fontSize:18,fontWeight:600,color:"#111827"}}>PPC Diary</div>
+        </div>
+        <div style={{fontSize:13,color:"#6b7280",marginBottom:18}}>Sign in to access your diary.</div>
+        <label style={{display:"block",fontSize:11,fontWeight:600,color:"#6b7280",marginBottom:4,textTransform:"uppercase",letterSpacing:.5}}>Email</label>
+        <input type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)} style={{width:"100%",padding:"9px 12px",border:"1px solid #d1d5db",borderRadius:7,fontSize:14,marginBottom:14,outline:"none",fontFamily:"inherit"}}/>
+        <label style={{display:"block",fontSize:11,fontWeight:600,color:"#6b7280",marginBottom:4,textTransform:"uppercase",letterSpacing:.5}}>Password</label>
+        <input type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)} style={{width:"100%",padding:"9px 12px",border:"1px solid #d1d5db",borderRadius:7,fontSize:14,marginBottom:18,outline:"none",fontFamily:"inherit"}}/>
+        {error&&<div style={{fontSize:12,color:"#dc2626",background:"#fef2f2",border:"1px solid #fecaca",borderRadius:6,padding:"8px 10px",marginBottom:14}}>{error}</div>}
+        <button type="submit" disabled={loading} style={{width:"100%",padding:"10px 14px",background:"#2563eb",color:"#fff",border:"none",borderRadius:7,fontSize:14,fontWeight:600,cursor:loading?"default":"pointer",opacity:loading?.6:1,fontFamily:"inherit"}}>{loading?"Signing in…":"Sign in"}</button>
+      </form>
+    </div>
+  );
+}
+
 function App() {
+  const [session,setSession]=useState(CURRENT_SESSION);
   const [accounts,setAccounts]=useState({});
   const [activeAccount,setActiveAccountState]=useState(null);
   const [showAccountModal,setShowAccountModal]=useState(false);
@@ -657,6 +731,7 @@ function App() {
   const switchAccount=(accountId)=>{loadAccountData(accountId);};
 
   useEffect(()=>{
+    if(!session)return;
     (async()=>{
       let accs=await sbLoadAccounts();
       if(!Object.keys(accs).length){
@@ -664,7 +739,12 @@ function App() {
       }
       setAccounts(accs);const ids=Object.keys(accs);if(ids.length>0)loadAccountData(ids[0]);
     })();
-  },[]);
+  },[session]);
+
+  const handleLogout=()=>{
+    sbLogout();setSession(null);
+    setAccounts({});setActiveAccountState(null);setEvents([]);setNotes({});setLinks({});setExperiments({});setRules([]);setSelectedId(null);
+  };
 
   const saveAccount=async()=>{
     if(!accountForm.name.trim())return;
@@ -899,6 +979,8 @@ function App() {
     </div>
   );
 
+  if(!session)return <LoginScreen onLogin={setSession}/>;
+
   return (
     <>
       <style>{CSS}</style>
@@ -931,6 +1013,7 @@ function App() {
             {importMsg&&(<div style={{padding:"5px 12px",borderRadius:7,fontSize:11,fontWeight:500,background:importMsg.type==="success"?"var(--green-bg)":"var(--red-bg)",border:`1px solid ${importMsg.type==="success"?"var(--green-border)":"var(--red-border)"}`,color:importMsg.type==="success"?"var(--green)":"var(--red)",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>{importMsg.type==="success"?"✓":"✕"} {importMsg.text}</div>)}
             {accounts[activeAccount]?.sheetId&&(<button className="pill" onClick={syncFromSheet} disabled={sheetSyncing} style={{opacity:sheetSyncing?.6:1}}>{sheetSyncing?"Syncing…":"↻ Sync Sheet"}</button>)}
             <label className="pill" style={{cursor:"pointer"}}>Import CSV<input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];e.target.value="";handleFile(f);}}/></label>
+            <button className="pill" onClick={handleLogout} title={session?.user?.email||""}>Sign out</button>
           </div>
         </div>
 
