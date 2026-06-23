@@ -663,6 +663,7 @@ function App() {
   const [importMsg,setImportMsg]=useState(null);
   const [sheetSyncing,setSheetSyncing]=useState(false);
   const [apiKey,setApiKey]=useState(()=>localStorage.getItem("ppc-anthropic-key")||"");
+  const [showApiKeyInput,setShowApiKeyInput]=useState(false);
   const [sortDir,setSortDir]=useState("desc");
   const [experiments,setExperiments]=useState({});
   const [rules,setRules]=useState([]);
@@ -1006,10 +1007,14 @@ function App() {
             </button>
             <button className="pill" onClick={()=>setShowRulesModal(true)} title="Auto-create watch items from event triggers">⚙ Rules ({rules.length})</button>
             <button className={`pill ${groupingOn?"on-green":""}`} onClick={()=>setGroupingOn(v=>!v)}>{groupingOn?"⬡ Grouped":"⬡ Group"}</button>
-            <div style={{display:"flex",alignItems:"center",gap:4}}>
-              <input type="password" placeholder="Anthropic API key for AI…" value={apiKey} onChange={e=>{setApiKey(e.target.value);localStorage.setItem("ppc-anthropic-key",e.target.value);}} style={{fontSize:11,padding:"4px 10px",borderRadius:6,border:"1px solid var(--border)",background:"var(--bg3)",color:"var(--text)",outline:"none",width:200,fontFamily:"var(--mono)"}}/>
-              {apiKey&&<span style={{fontSize:11,color:"var(--green)",fontWeight:500}}>✓</span>}
-            </div>
+            {showApiKeyInput||!apiKey?(
+              <div style={{display:"flex",alignItems:"center",gap:4}}>
+                <input type="password" autoFocus={showApiKeyInput} placeholder="Anthropic API key for AI…" value={apiKey} onChange={e=>{setApiKey(e.target.value);localStorage.setItem("ppc-anthropic-key",e.target.value);}} onBlur={()=>apiKey&&setShowApiKeyInput(false)} onKeyDown={e=>{if(e.key==="Enter"||e.key==="Escape"){setShowApiKeyInput(false);e.target.blur();}}} style={{fontSize:11,padding:"4px 10px",borderRadius:6,border:"1px solid var(--border)",background:"var(--bg3)",color:"var(--text)",outline:"none",width:200,fontFamily:"var(--mono)"}}/>
+                {apiKey&&<span style={{fontSize:11,color:"var(--green)",fontWeight:500}}>✓</span>}
+              </div>
+            ):(
+              <button className="pill" onClick={()=>setShowApiKeyInput(true)} title="Edit Anthropic API key" style={{color:"var(--green)"}}>AI ✓</button>
+            )}
             {importMsg&&(<div style={{padding:"5px 12px",borderRadius:7,fontSize:11,fontWeight:500,background:importMsg.type==="success"?"var(--green-bg)":"var(--red-bg)",border:`1px solid ${importMsg.type==="success"?"var(--green-border)":"var(--red-border)"}`,color:importMsg.type==="success"?"var(--green)":"var(--red)",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>{importMsg.type==="success"?"✓":"✕"} {importMsg.text}</div>)}
             {accounts[activeAccount]?.sheetId&&(<button className="pill" onClick={syncFromSheet} disabled={sheetSyncing} style={{opacity:sheetSyncing?.6:1}}>{sheetSyncing?"Syncing…":"↻ Sync Sheet"}</button>)}
             <label className="pill" style={{cursor:"pointer"}}>Import CSV<input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];e.target.value="";handleFile(f);}}/></label>
