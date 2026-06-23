@@ -349,8 +349,8 @@ async function fetchAIInsight(evt,apiKey){
   if(!apiKey)throw new Error("No API key set");
   const op=evt.op||evt.operation;
   const prompt=`You are a Google Ads expert. A change was made to a Google Ads account. Explain in 1-2 plain English sentences what this change means and what the likely intent or impact is. Be specific and practical. No jargon. No bullet points.\n\nChange: ${evt.summary}\nCampaign: ${evt.campaignName}\nResource type: ${evt.resourceType}\nOperation: ${op}\nFields changed: ${(evt.fields||[]).join(", ")}\nOld state: ${JSON.stringify(evt.oldObj).slice(0,400)}\nNew state: ${JSON.stringify(evt.newObj).slice(0,400)}`;
-  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:200,messages:[{role:"user",content:prompt}]})});
-  if(!res.ok)throw new Error("API error");
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:200,messages:[{role:"user",content:prompt}]})});
+  if(!res.ok){const errText=await res.text();let msg=errText;try{const j=JSON.parse(errText);msg=j.error?.message||j.message||errText;}catch(e){}throw new Error(`Anthropic ${res.status}: ${msg}`);}
   const data=await res.json();
   return data.content?.find(b=>b.type==="text")?.text||"";
 }
@@ -922,7 +922,7 @@ function App() {
   const handleSaveNote=()=>{if(!selectedId||!noteForm.body.trim())return;const updated={...notes,[selectedId]:{body:noteForm.body,tags:noteForm.tags,savedAt:new Date().toISOString()}};saveNotes(updated,selectedId);setEditing(false);};
   const handleDeleteNote=()=>{if(!selectedId)return;const updated={...notes};delete updated[selectedId];saveNotes(updated,selectedId);setNoteForm({body:"",tags:[]});setEditing(true);};
   const toggleNoteTag=t=>setNoteForm(f=>({...f,tags:f.tags.includes(t)?f.tags.filter(x=>x!==t):[...f.tags,t]}));
-  const handleGetAiInsight=async()=>{if(!selected||aiCache[selected.id])return;setAiLoading(true);try{const insight=await fetchAIInsight(selected,apiKey);saveAiCache({...aiCache,[selected.id]:insight});}catch(e){console.error(e);}setAiLoading(false);};
+  const handleGetAiInsight=async()=>{if(!selected||aiCache[selected.id])return;setAiLoading(true);try{const insight=await fetchAIInsight(selected,apiKey);saveAiCache({...aiCache,[selected.id]:insight});}catch(e){console.error(e);setImportMsg({type:"error",text:"AI request failed: "+e.message});setTimeout(()=>setImportMsg(null),8000);}setAiLoading(false);};
 
   const renderEventCard=(e,nested=false)=>{
     const op=e.op||e.operation,sig=e.significance||"low",sigCfg=SIG_CONFIG[sig],hasNote=!!notes[e.id],evtLinks=links[e.id]||[];
