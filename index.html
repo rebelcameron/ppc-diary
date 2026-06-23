@@ -92,6 +92,15 @@ async function sbSaveWatchItem(accountId,eventId,data) {
   if (!data) { await sbFetch(`watchlist?event_id=eq.${eventId}&account_id=eq.${accountId}`,{method:"DELETE"}); }
   else { await sbFetch("watchlist",{method:"POST",headers:{"Prefer":"resolution=merge-duplicates"},body:JSON.stringify({event_id:eventId,account_id:accountId,data})}); }
 }
+async function sbLoadAccounts() {
+  try { const rows=await sbFetch(`accounts?order=created_at.asc`); return Object.fromEntries((rows||[]).map(r=>[r.id,r.data])); } catch(e) { console.warn("accounts table missing or unreadable",e); return {}; }
+}
+async function sbSaveAccount(id,account) {
+  await sbFetch("accounts",{method:"POST",headers:{"Prefer":"resolution=merge-duplicates"},body:JSON.stringify({id,data:account})});
+}
+async function sbDeleteAccount(id) {
+  await sbFetch(`accounts?id=eq.${id}`,{method:"DELETE"});
+}
 async function sbLoadRules(accountId) {
   try { const rows=await sbFetch(`rules?account_id=eq.${accountId}&order=created_at.asc`); return (rows||[]).map(r=>({id:r.id,...(r.data||{})})); } catch(e) { console.warn("rules table missing or unreadable",e); return []; }
 }
@@ -648,22 +657,26 @@ function App() {
   const switchAccount=(accountId)=>{loadAccountData(accountId);};
 
   useEffect(()=>{
-    window._localGet(ACCOUNTS_KEY).then(r=>{
-      let accs=r?.value?JSON.parse(r.value):{};
-      if(accs.demo){delete accs.demo;window._localSet(ACCOUNTS_KEY,JSON.stringify(accs));}
+    (async()=>{
+      let accs=await sbLoadAccounts();
+      if(!Object.keys(accs).length){
+        try{const r=await window._localGet(ACCOUNTS_KEY);const local=r?.value?JSON.parse(r.value):{};delete local.demo;if(Object.keys(local).length){await Promise.all(Object.entries(local).map(([id,a])=>sbSaveAccount(id,a).catch(()=>{})));accs=local;}}catch(e){}
+      }
       setAccounts(accs);const ids=Object.keys(accs);if(ids.length>0)loadAccountData(ids[0]);
-    }).catch(()=>{});
+    })();
   },[]);
 
-  const saveAccount=()=>{
+  const saveAccount=async()=>{
     if(!accountForm.name.trim())return;
     const id="acc_"+Date.now();const newAcc={name:accountForm.name.trim(),color:accountForm.color,sheetId:accountForm.sheetId.trim()};
-    const updated={...accounts,[id]:newAcc};setAccounts(updated);window._localSet(ACCOUNTS_KEY,JSON.stringify(updated)).catch(()=>{});
+    try{await sbSaveAccount(id,newAcc);}catch(err){setImportMsg({type:"error",text:"Could not save account: "+err.message});setTimeout(()=>setImportMsg(null),6000);return;}
+    const updated={...accounts,[id]:newAcc};setAccounts(updated);
     setShowAccountModal(false);setAccountForm({name:"",color:"#60a5fa",sheetId:""});switchAccount(id);
   };
 
-  const deleteAccount=(id)=>{
-    const updated={...accounts};delete updated[id];setAccounts(updated);window._localSet(ACCOUNTS_KEY,JSON.stringify(updated)).catch(()=>{});
+  const deleteAccount=async(id)=>{
+    try{await sbDeleteAccount(id);}catch(e){console.error(e);}
+    const updated={...accounts};delete updated[id];setAccounts(updated);
     const remaining=Object.keys(updated);if(remaining.length>0)switchAccount(remaining[0]);else{setActiveAccountState(null);setEvents([]);setNotes({});setLinks({});}
   };
 
