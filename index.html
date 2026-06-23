@@ -340,6 +340,7 @@ const BID_PATTERNS={
 };
 function matchesBidFilter(evt, key){
   if(key==="all")return true;
+  if((evt.op||evt.operation)!=="UPDATE")return false;
   if(key==="any"){return Object.values(BID_PATTERNS).some(p=>p.resourceTypes.includes(evt.resourceType)&&(evt.fields||[]).some(f=>p.fieldMatch(f)));}
   const p=BID_PATTERNS[key];if(!p)return true;
   if(!p.resourceTypes.includes(evt.resourceType))return false;
