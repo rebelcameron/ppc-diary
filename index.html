@@ -223,8 +223,8 @@ function buildSummary(resType,op,fields,oldObj,newObj){
   }
   if(op==="UPDATE"){
     if(fields.some(f=>f.includes("targetImpressionShare"))){const loc={ABSOLUTE_TOP_OF_PAGE:"absolute top",TOP_OF_PAGE:"top of page",ANYWHERE_ON_PAGE:"anywhere"}[rootNew?.targetImpressionShare?.location]||"";const share=rootNew?.targetImpressionShare?.locationFractionMicros?Math.round(parseInt(rootNew.targetImpressionShare.locationFractionMicros)/10000)+"%":"";const cap=rootNew?.targetImpressionShare?.cpcBidCeilingMicros?fmtMicros(rootNew.targetImpressionShare.cpcBidCeilingMicros):"";return`Switched to Target Impression Share${loc?" at "+loc:""}${share?" ("+share+")":""}${cap?", max CPC "+cap:""}`;}
-    if(fields.some(f=>f.includes("targetCpaMicros"))){const oldCpa=fmtMicros(rootOld?.maximizeConversions?.targetCpaMicros||rootOld?.targetCpa?.targetCpaMicros);const newCpa=fmtMicros(rootNew?.maximizeConversions?.targetCpaMicros||rootNew?.targetCpa?.targetCpaMicros);if(oldCpa&&newCpa)return`Adjusted Target CPA: ${oldCpa} → ${newCpa}`;return"Updated Target CPA bid strategy";}
-    if(fields.some(f=>f.includes("targetRoas"))){const oldR=rootOld?.targetRoas?.targetRoas,newR=rootNew?.targetRoas?.targetRoas;if(oldR&&newR)return`Adjusted Target ROAS: ${oldR} → ${newR}`;return"Updated Target ROAS bid strategy";}
+    if(fields.some(f=>f.includes("targetCpaMicros"))){const oldCpa=fmtMicros(rootOld?.maximizeConversions?.targetCpaMicros||rootOld?.targetCpa?.targetCpaMicros||rootOld?.targetCpaMicros||rootOld?.effectiveTargetCpaMicros);const newCpa=fmtMicros(rootNew?.maximizeConversions?.targetCpaMicros||rootNew?.targetCpa?.targetCpaMicros||rootNew?.targetCpaMicros||rootNew?.effectiveTargetCpaMicros);if(oldCpa&&newCpa)return`Adjusted Target CPA: ${oldCpa} → ${newCpa}`;if(newCpa&&!oldCpa)return`Set Target CPA to ${newCpa}`;if(oldCpa&&!newCpa)return`Removed Target CPA (was ${oldCpa})`;return"Updated Target CPA bid strategy";}
+    if(fields.some(f=>f.includes("targetRoas"))){const oldR=rootOld?.targetRoas?.targetRoas||rootOld?.targetRoas||rootOld?.effectiveTargetRoas;const newR=rootNew?.targetRoas?.targetRoas||rootNew?.targetRoas||rootNew?.effectiveTargetRoas;const isNum=v=>v!=null&&typeof v!=="object"&&!isNaN(parseFloat(v));if(isNum(oldR)&&isNum(newR))return`Adjusted Target ROAS: ${oldR} → ${newR}`;if(isNum(newR)&&!isNum(oldR))return`Set Target ROAS to ${newR}`;if(isNum(oldR)&&!isNum(newR))return`Removed Target ROAS (was ${oldR})`;return"Updated Target ROAS bid strategy";}
     if(fields.some(f=>f.includes("maximizeConversionValue")))return"Switched to Maximise Conversion Value";
     if(fields.some(f=>f.includes("maximizeConversions")&&!f.includes("targetCpa")))return"Switched to Maximise Conversions";
     if(fields.some(f=>f.includes("biddingStrategy")))return"Changed portfolio bidding strategy";
@@ -490,7 +490,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .note-dot{width:5px;height:5px;border-radius:50%;background:var(--purple);flex-shrink:0;margin-left:auto}
 .group-expand{display:flex;align-items:center;gap:5px;width:calc(100% + 32px);margin:12px -16px -14px;padding:9px 16px;font-size:10px;color:var(--muted2);cursor:pointer;border:none;border-top:1px solid var(--border);background:transparent;transition:all .12s;font-family:var(--sans);font-weight:600;text-align:left;border-radius:0 0 9px 9px;letter-spacing:.2px}
 .group-expand:hover{color:var(--text);background:var(--bg3)}
-.group-children{margin-top:4px;margin-left:10px;border-left:2px solid var(--border);padding-left:8px}
+.group-children{margin-top:4px;margin-bottom:6px;margin-left:10px;border-left:2px solid var(--border);padding-left:8px}
+.evt-wrapper{margin-bottom:6px}
+.evt-wrapper>.evt-item{margin-bottom:0}
 .resizer{width:5px;background:transparent;cursor:col-resize;position:absolute;top:0;bottom:0;z-index:50;transition:background .15s;user-select:none;touch-action:none}
 .resizer:hover,.resizer.active{background:rgba(37,99,235,.2)}
 .detail-scroll{flex:1;overflow-y:auto;padding:28px 30px}
@@ -944,7 +946,7 @@ function App() {
   const renderEventCard=(e,nested=false)=>{
     const op=e.op||e.operation,sig=e.significance||"low",sigCfg=SIG_CONFIG[sig],hasNote=!!notes[e.id],evtLinks=links[e.id]||[];
     return(
-      <div key={e.id}>
+      <div key={e.id} className={nested?"":"evt-wrapper"}>
         <div className={["evt-item",(selectedId===e.id||(e.isGroup&&e.groupEvents?.some(c=>c.id===selectedId)))?"sel":"",hasNote?"has-note":sig==="high"?"sig-high":"",nested?"nested-card":""].filter(Boolean).join(" ")} onClick={()=>handleSelectEvent(e.isGroup&&e.groupEvents?.length?e.groupEvents[0].id:e.id)} style={nested?{background:"var(--bg)",marginBottom:2}:{}}>
           <div className="evt-meta">
             <span className="evt-date">{fmtDate(e.date)}</span>
