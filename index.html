@@ -387,6 +387,28 @@ const RULE_PRESETS={
   negative_added:{label:"Negative keyword added",hint:"Fires when a negative keyword is added",direction:false,threshold:false,matches:e=>e.resourceType==="AD_GROUP_CRITERION"&&e.op==="CREATE"&&!!Object.values(e.newObj||{})[0]?.keyword&&!!Object.values(e.newObj||{})[0]?.negative},
 };
 
+const QUICK_TEMPLATES=[
+  {key:"tcpa_up",label:"Target CPA increase (campaign)",preset_type:"tcpa_changed",direction:"up",min_pct_change:5,days_offset:14},
+  {key:"tcpa_down",label:"Target CPA decrease (campaign)",preset_type:"tcpa_changed",direction:"down",min_pct_change:5,days_offset:14},
+  {key:"troas_up",label:"Target ROAS increase (campaign)",preset_type:"troas_changed",direction:"up",min_pct_change:5,days_offset:21},
+  {key:"troas_down",label:"Target ROAS decrease (campaign)",preset_type:"troas_changed",direction:"down",min_pct_change:5,days_offset:21},
+  {key:"ag_tcpa_up",label:"Target CPA increase (ad group)",preset_type:"adgroup_tcpa_changed",direction:"up",min_pct_change:5,days_offset:14},
+  {key:"ag_tcpa_down",label:"Target CPA decrease (ad group)",preset_type:"adgroup_tcpa_changed",direction:"down",min_pct_change:5,days_offset:14},
+  {key:"ag_cpc_up",label:"CPC bid increase (ad group)",preset_type:"adgroup_cpc_changed",direction:"up",min_pct_change:10,days_offset:14},
+  {key:"ag_cpc_down",label:"CPC bid decrease (ad group)",preset_type:"adgroup_cpc_changed",direction:"down",min_pct_change:10,days_offset:14},
+  {key:"kw_cpc_up",label:"CPC bid increase (keyword)",preset_type:"keyword_cpc_changed",direction:"up",min_pct_change:10,days_offset:14},
+  {key:"kw_cpc_down",label:"CPC bid decrease (keyword)",preset_type:"keyword_cpc_changed",direction:"down",min_pct_change:10,days_offset:14},
+  {key:"budget_up",label:"Budget increase",preset_type:"budget_changed",direction:"up",min_pct_change:10,days_offset:14},
+  {key:"budget_down",label:"Budget decrease",preset_type:"budget_changed",direction:"down",min_pct_change:10,days_offset:14},
+  {key:"strategy_switch",label:"Bid strategy switched",preset_type:"bid_strategy_switched",direction:"any",min_pct_change:0,days_offset:21},
+  {key:"portfolio",label:"Portfolio strategy changed",preset_type:"portfolio_strategy_changed",direction:"any",min_pct_change:0,days_offset:21},
+  {key:"paused",label:"Campaign paused",preset_type:"campaign_paused",direction:"any",min_pct_change:0,days_offset:3},
+  {key:"enabled",label:"Campaign enabled",preset_type:"campaign_enabled",direction:"any",min_pct_change:0,days_offset:7},
+  {key:"created",label:"New campaign launched",preset_type:"campaign_created",direction:"any",min_pct_change:0,days_offset:14},
+  {key:"kw_added",label:"Keyword added",preset_type:"keyword_added",direction:"any",min_pct_change:0,days_offset:7},
+  {key:"neg_added",label:"Negative added",preset_type:"negative_added",direction:"any",min_pct_change:0,days_offset:7},
+];
+
 const HYPOTHESIS_DEFAULTS={
   tcpa_changed:{up:"Raised campaign tCPA — expecting more conversion volume but higher CPA, possibly lower ROAS. {summary}",down:"Lowered campaign tCPA — expecting lower CPA but fewer conversions; check that volume holds. {summary}",any:"Campaign tCPA change — watching CPA, volume and ROAS. {summary}"},
   troas_changed:{up:"Raised campaign tROAS — expecting higher ROAS but lower spend and volume. {summary}",down:"Lowered campaign tROAS — expecting more spend and volume at lower ROAS; check efficiency. {summary}",any:"Campaign tROAS change — watching ROAS, spend and conversion value. {summary}"},
@@ -1442,6 +1464,15 @@ function App() {
 
               {ruleForm.show&&(<div style={{border:"1px solid var(--border)",borderRadius:10,padding:14,background:"var(--bg)"}}>
                 <div style={{fontSize:12,fontWeight:600,marginBottom:10}}>{ruleForm.id?"Edit rule":"New rule"}</div>
+
+                {!ruleForm.id&&(
+                  <div style={{marginBottom:14}}>
+                    <div className="meta-label" style={{marginBottom:6}}>Quick templates <span style={{color:"var(--muted)",fontWeight:400}}>(click to pre-fill)</span></div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                      {QUICK_TEMPLATES.map(t=>(<button key={t.key} className="pill" onClick={()=>setRuleForm(f=>({...f,name:t.label,preset_type:t.preset_type,direction:t.direction,min_pct_change:t.min_pct_change,days_offset:t.days_offset,hypothesis_template:defaultHypothesisFor(t.preset_type,t.direction)}))} style={{fontSize:11}}>{t.label}</button>))}
+                    </div>
+                  </div>
+                )}
 
                 <div style={{marginBottom:10}}>
                   <div className="meta-label" style={{marginBottom:5}}>Trigger</div>
