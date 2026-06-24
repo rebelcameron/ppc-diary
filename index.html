@@ -387,6 +387,27 @@ const RULE_PRESETS={
   negative_added:{label:"Negative keyword added",hint:"Fires when a negative keyword is added",direction:false,threshold:false,matches:e=>e.resourceType==="AD_GROUP_CRITERION"&&e.op==="CREATE"&&!!Object.values(e.newObj||{})[0]?.keyword&&!!Object.values(e.newObj||{})[0]?.negative},
 };
 
+const HYPOTHESIS_DEFAULTS={
+  tcpa_changed:{up:"Raised campaign tCPA — expecting more conversion volume but higher CPA, possibly lower ROAS. {summary}",down:"Lowered campaign tCPA — expecting lower CPA but fewer conversions; check that volume holds. {summary}",any:"Campaign tCPA change — watching CPA, volume and ROAS. {summary}"},
+  troas_changed:{up:"Raised campaign tROAS — expecting higher ROAS but lower spend and volume. {summary}",down:"Lowered campaign tROAS — expecting more spend and volume at lower ROAS; check efficiency. {summary}",any:"Campaign tROAS change — watching ROAS, spend and conversion value. {summary}"},
+  adgroup_tcpa_changed:{up:"Raised ad-group tCPA — expecting more volume in this ad group but higher CPA. {summary}",down:"Lowered ad-group tCPA — expecting tighter CPA but volume may drop. {summary}",any:"Ad-group tCPA change — watching this ad group's CPA and volume. {summary}"},
+  adgroup_troas_changed:{up:"Raised ad-group tROAS — expecting higher ROAS but less spend/volume in this ad group. {summary}",down:"Lowered ad-group tROAS — expecting more spend/volume at lower ROAS in this ad group. {summary}",any:"Ad-group tROAS change — watching this ad group's ROAS and spend. {summary}"},
+  adgroup_cpc_changed:{up:"Raised ad-group default CPC — expecting better ad rank and more impressions, but higher cost per click. {summary}",down:"Lowered ad-group default CPC — expecting lower cost per click; watch impression share / position. {summary}",any:"Ad-group CPC change — watching impressions, CTR and CPC. {summary}"},
+  keyword_cpc_changed:{up:"Raised keyword CPC — expecting better position / more impressions on this keyword, at higher cost. {summary}",down:"Lowered keyword CPC — expecting lower cost on this keyword; watch position and clicks. {summary}",any:"Keyword CPC change — watching impressions, position and CTR. {summary}"},
+  portfolio_strategy_changed:{any:"Portfolio bid strategy change — watching all campaigns attached to this portfolio for CPA / ROAS / volume shifts. {summary}"},
+  budget_changed:{up:"Raised daily budget — expecting more spend and volume; check whether efficiency holds. {summary}",down:"Lowered daily budget — expecting less spend and volume; check if delivery is constrained. {summary}",any:"Budget change — watching spend, volume and efficiency. {summary}"},
+  bid_strategy_switched:{any:"Switched bidding strategy — expecting a learning period; watching CPA, ROAS and volume to settle. {summary}"},
+  campaign_paused:{any:"Campaign paused — confirming the pause is intentional and tracking any cannibalisation/recovery in sibling campaigns. {summary}"},
+  campaign_enabled:{any:"Campaign enabled — watching ramp-up: impressions, conversions and CPA over the next two weeks. {summary}"},
+  campaign_created:{any:"New campaign launched — watching initial delivery, CPA / ROAS and learning-phase exit. {summary}"},
+  keyword_added:{any:"New keyword — watching impressions, CTR, conversion rate and CPA. Is this keyword pulling its weight? {summary}"},
+  negative_added:{any:"New negative — watching whether unwanted traffic drops and impressions on legitimate queries hold. {summary}"},
+};
+function defaultHypothesisFor(presetType, direction){
+  const d=HYPOTHESIS_DEFAULTS[presetType];if(!d)return"Auto-watch: {summary}";
+  return d[direction]||d.any||"Auto-watch: {summary}";
+}
+
 function ruleMatchesEvent(rule,evt){
   const preset=RULE_PRESETS[rule.preset_type];
   if(!preset||!preset.matches(evt))return false;
@@ -691,7 +712,7 @@ function App() {
   const [experiments,setExperiments]=useState({});
   const [rules,setRules]=useState([]);
   const [showRulesModal,setShowRulesModal]=useState(false);
-  const [ruleForm,setRuleForm]=useState({id:null,name:"",preset_type:"tcpa_changed",direction:"any",min_pct_change:0,days_offset:14,hypothesis_template:"Auto-watch: {summary}",enabled:true,show:false});
+  const [ruleForm,setRuleForm]=useState({id:null,name:"",preset_type:"tcpa_changed",direction:"any",min_pct_change:0,days_offset:14,hypothesis_template:defaultHypothesisFor("tcpa_changed","any"),enabled:true,show:false});
   // ── NEW: expEditId tracks which watch list item is being edited (null = none)
   const [expEditId,setExpEditId]=useState(null);
   const [expForm,setExpForm]=useState({hypothesis:"",checkDate:"",show:false});
@@ -796,7 +817,7 @@ function App() {
     const count=Object.keys(created).length;
     setImportMsg({type:"success",text:ruleForm.id?`Rule updated · ${count} new watch item${count===1?"":"s"} from backfill`:`Rule saved · ${count} watch item${count===1?"":"s"} created from history`});
     setTimeout(()=>setImportMsg(null),5000);
-    setRuleForm({id:null,name:"",preset_type:"tcpa_changed",direction:"any",min_pct_change:0,days_offset:14,hypothesis_template:"Auto-watch: {summary}",enabled:true,show:false});
+    setRuleForm({id:null,name:"",preset_type:"tcpa_changed",direction:"any",min_pct_change:0,days_offset:14,hypothesis_template:defaultHypothesisFor("tcpa_changed","any"),enabled:true,show:false});
   };
   const handleEditRule=(rule)=>{
     setRuleForm({id:rule.id,name:rule.name||"",preset_type:rule.preset_type,direction:rule.direction||"any",min_pct_change:rule.min_pct_change||0,days_offset:rule.days_offset||14,hypothesis_template:rule.hypothesis_template||"Auto-watch: {summary}",enabled:rule.enabled!==false,show:true});
@@ -1424,7 +1445,7 @@ function App() {
 
                 <div style={{marginBottom:10}}>
                   <div className="meta-label" style={{marginBottom:5}}>Trigger</div>
-                  <select value={ruleForm.preset_type} onChange={e=>setRuleForm(f=>({...f,preset_type:e.target.value,direction:"any",min_pct_change:0}))} className="search-input" style={{width:"100%",fontFamily:"var(--sans)",fontSize:12}}>
+                  <select value={ruleForm.preset_type} onChange={e=>setRuleForm(f=>{const isAuto=f.hypothesis_template===defaultHypothesisFor(f.preset_type,f.direction)||f.hypothesis_template==="Auto-watch: {summary}";return{...f,preset_type:e.target.value,direction:"any",min_pct_change:0,hypothesis_template:isAuto?defaultHypothesisFor(e.target.value,"any"):f.hypothesis_template};})} className="search-input" style={{width:"100%",fontFamily:"var(--sans)",fontSize:12}}>
                     {Object.entries(RULE_PRESETS).map(([k,v])=>(<option key={k} value={k}>{v.label}</option>))}
                   </select>
                   <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>{preset.hint}</div>
@@ -1433,7 +1454,7 @@ function App() {
                 {preset.direction&&(<div style={{marginBottom:10}}>
                   <div className="meta-label" style={{marginBottom:5}}>Direction</div>
                   <div style={{display:"flex",gap:5}}>
-                    {[["any","Any change"],["up","↑ Increased only"],["down","↓ Decreased only"]].map(([v,label])=>(<button key={v} onClick={()=>setRuleForm(f=>({...f,direction:v}))} className="pill" style={ruleForm.direction===v?{background:"var(--blue-bg)",borderColor:"var(--blue-border)",color:"var(--blue)",fontWeight:600}:{}}>{label}</button>))}
+                    {[["any","Any change"],["up","↑ Increased only"],["down","↓ Decreased only"]].map(([v,label])=>(<button key={v} onClick={()=>setRuleForm(f=>{const isAuto=f.hypothesis_template===defaultHypothesisFor(f.preset_type,f.direction)||f.hypothesis_template==="Auto-watch: {summary}";return{...f,direction:v,hypothesis_template:isAuto?defaultHypothesisFor(f.preset_type,v):f.hypothesis_template};})} className="pill" style={ruleForm.direction===v?{background:"var(--blue-bg)",borderColor:"var(--blue-border)",color:"var(--blue)",fontWeight:600}:{}}>{label}</button>))}
                   </div>
                 </div>)}
 
@@ -1454,13 +1475,13 @@ function App() {
 
                 <div style={{marginBottom:14}}>
                   <div className="meta-label" style={{marginBottom:5}}>Hypothesis template</div>
-                  <input className="search-input" value={ruleForm.hypothesis_template} onChange={e=>setRuleForm(f=>({...f,hypothesis_template:e.target.value}))} style={{fontSize:12}}/>
-                  <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>Use <code style={{fontFamily:"var(--mono)"}}>{"{summary}"}</code> to insert the change summary</div>
+                  <textarea className="search-input" value={ruleForm.hypothesis_template} onChange={e=>setRuleForm(f=>({...f,hypothesis_template:e.target.value}))} rows={3} style={{fontSize:12,width:"100%",resize:"vertical",fontFamily:"var(--sans)"}}/>
+                  <div style={{fontSize:10,color:"var(--muted)",marginTop:4}}>Auto-fills based on the preset + direction. Use <code style={{fontFamily:"var(--mono)"}}>{"{summary}"}</code> to insert the change summary. Edit freely — your text is preserved.</div>
                 </div>
 
                 <div style={{display:"flex",gap:8}}>
                   <button className="btn-save" onClick={handleSaveRule} style={{flex:1}}>{ruleForm.id?"Save Changes":"Create Rule"}</button>
-                  <button className="nc-btn" onClick={()=>setRuleForm({id:null,name:"",preset_type:"tcpa_changed",direction:"any",min_pct_change:0,days_offset:14,hypothesis_template:"Auto-watch: {summary}",enabled:true,show:false})}>Cancel</button>
+                  <button className="nc-btn" onClick={()=>setRuleForm({id:null,name:"",preset_type:"tcpa_changed",direction:"any",min_pct_change:0,days_offset:14,hypothesis_template:defaultHypothesisFor("tcpa_changed","any"),enabled:true,show:false})}>Cancel</button>
                 </div>
               </div>)}
 
